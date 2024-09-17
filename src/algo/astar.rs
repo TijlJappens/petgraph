@@ -63,13 +63,16 @@ use crate::algo::Measure;
 ///
 /// Returns the total cost + the path of subsequent `NodeId` from start to finish, if one was
 /// found.
-pub fn astar<G, F, H, K, IsGoal>(
+/// The early return function takes in the cost to reach the current node and the cost to reach the previous node.
+pub fn astar<G, F, H, K, IsGoal, L>(
     graph: G,
     start: G::NodeId,
     mut is_goal: IsGoal,
     mut edge_cost: F,
     mut estimate_cost: H,
-) -> Option<(K, Vec<G::NodeId>)>
+    mut early_return_check: L,
+    force_compute: bool,
+) -> Result<Option<(K, Vec<G::NodeId>)>, ()>
 where
     G: IntoEdges + Visitable,
     IsGoal: FnMut(G::NodeId) -> bool,
@@ -77,6 +80,7 @@ where
     F: FnMut(G::EdgeRef) -> K,
     H: FnMut(G::NodeId) -> K,
     K: Measure + Copy,
+    L: FnMut((K, K, G::NodeId, G::NodeId)) -> bool,
 {
     let mut visit_next = BinaryHeap::new();
     let mut scores = HashMap::new(); // g-values, cost to reach the node
@@ -91,9 +95,14 @@ where
         if is_goal(node) {
             let path = path_tracker.reconstruct_path_to(node);
             let cost = scores[&node];
-            return Some((cost, path));
+            return Ok(Some((cost, path)));
+        } else if !force_compute {
+            if let Some(previous_node) = path_tracker.came_from(node) {
+                if early_return_check((scores[&node],scores[&previous_node], node, previous_node)) {
+                    return Err(());
+                }
+            }
         }
-
         // This lookup can be unwrapped without fear of panic since the node was necessarily scored
         // before adding it to `visit_next`.
         let node_score = scores[&node];
@@ -136,7 +145,7 @@ where
         }
     }
 
-    None
+    Ok(None)
 }
 
 struct PathTracker<G>
@@ -156,6 +165,10 @@ where
         PathTracker {
             came_from: HashMap::new(),
         }
+    }
+
+    fn came_from(&self, node: G::NodeId) -> Option<G::NodeId> {
+        self.came_from.get(&node).copied()
     }
 
     fn set_predecessor(&mut self, node: G::NodeId, previous: G::NodeId) {
