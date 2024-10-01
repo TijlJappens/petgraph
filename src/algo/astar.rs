@@ -148,8 +148,8 @@ pub fn astar_early_return<G, F, H, K, IsGoal, L>(
     mut edge_cost: F,
     mut estimate_cost: H,
     mut early_return_check: L,
-    force_compute: bool,
-) -> Result<Option<(K, Vec<G::NodeId>)>, ()>
+) -> 
+Option<(K, Vec<G::NodeId>)>
 where
     G: IntoEdges + Visitable,
     IsGoal: FnMut(G::NodeId) -> bool,
@@ -172,13 +172,7 @@ where
         if is_goal(node) {
             let path = path_tracker.reconstruct_path_to(node);
             let cost = scores[&node];
-            return Ok(Some((cost, path)));
-        } else if !force_compute {
-            if let Some(previous_node) = path_tracker.came_from(node) {
-                if early_return_check((scores[&node],scores[&previous_node], node, previous_node)) {
-                    return Err(());
-                }
-            }
+            return Some((cost, path));
         }
         // This lookup can be unwrapped without fear of panic since the node was necessarily scored
         // before adding it to `visit_next`.
@@ -200,7 +194,8 @@ where
 
         for edge in graph.edges(node) {
             let next = edge.target();
-            let next_score = node_score + edge_cost(edge);
+            let edge_cost = edge_cost(edge);
+            let next_score = node_score + edge_cost;
 
             match scores.entry(next) {
                 Occupied(mut entry) => {
@@ -209,10 +204,15 @@ where
                     if *entry.get() <= next_score {
                         continue;
                     }
-                    entry.insert(next_score);
+                    if early_return_check((next_score, node_score, next, node)) {
+                        entry.insert(next_score);
+                    }
+                    
                 }
                 Vacant(entry) => {
-                    entry.insert(next_score);
+                    if early_return_check((next_score, node_score, next, node)) {
+                        entry.insert(next_score);
+                    }
                 }
             }
 
@@ -222,7 +222,7 @@ where
         }
     }
 
-    Ok(None)
+    None
 }
 
 struct PathTracker<G>
