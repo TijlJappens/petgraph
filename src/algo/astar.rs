@@ -204,21 +204,19 @@ where
                     if *entry.get() <= next_score {
                         continue;
                     }
-                    if early_return_check((next_score, node_score, next, node)) {
-                        entry.insert(next_score);
-                    }
+                    entry.insert(next_score);
                     
                 }
                 Vacant(entry) => {
-                    if early_return_check((next_score, node_score, next, node)) {
-                        entry.insert(next_score);
-                    }
+                    entry.insert(next_score);
                 }
             }
 
-            path_tracker.set_predecessor(next, node);
-            let next_estimate_score = next_score + estimate_cost(next);
-            visit_next.push(MinScored(next_estimate_score, next));
+            if !early_return_check((next_score, node_score, next, node)) {
+                path_tracker.set_predecessor(next, node);
+                let next_estimate_score = next_score + estimate_cost(next);
+                visit_next.push(MinScored(next_estimate_score, next));
+            }
         }
     }
 
