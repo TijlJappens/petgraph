@@ -12,9 +12,10 @@
 //! strictly dominates **B** and there does not exist any node **C** where **A**
 //! dominates **C** and **C** dominates **B**.
 
-use std::cmp::Ordering;
-use std::collections::{hash_map::Iter, HashMap, HashSet};
-use std::hash::Hash;
+use alloc::{vec, vec::Vec};
+use core::{cmp::Ordering, hash::Hash};
+
+use hashbrown::{hash_map::Iter, HashMap, HashSet};
 
 use crate::visit::{DfsPostOrder, GraphBase, IntoNeighbors, Visitable, Walker};
 
@@ -227,8 +228,7 @@ where
     }
 
     // All done! Translate the indices back into proper `G::NodeId`s.
-
-    debug_assert!(!dominators.iter().any(|&dom| dom == UNDEFINED));
+    debug_assert!(!dominators.contains(&UNDEFINED));
 
     Dominators {
         root,
