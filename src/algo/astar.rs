@@ -1,6 +1,9 @@
 use alloc::{collections::BinaryHeap, vec, vec::Vec};
 use core::{hash::Hash, ops::Sub};
 
+#[cfg(feature = "std")]
+use std::println;
+
 use hashbrown::hash_map::{
     Entry::{Occupied, Vacant},
     HashMap,
@@ -240,79 +243,166 @@ where
     H: FnMut(G::NodeId) -> K,
     K: Measure + Copy + Sub<Output = K>,
 {
+    use std::time::Instant;
+
     let mut visit_next = BinaryHeap::new();
     let mut scores = HashMap::new(); // g-values, cost to reach the node
     let mut estimate_scores = HashMap::new(); // f-values, cost to reach + estimate cost to goal
     let mut path_tracker = PathTracker::<G>::new();
 
+    // Profiling timers
+    let total_start = Instant::now();
+    let mut pop_time = 0u128;
+    let mut push_time = 0u128;
+    let mut cost_time = 0u128;
+    let mut heuristic_time = 0u128;
+    let mut amount_of_pops = 0u128;
+    let mut amount_of_pushes = 0u128;
+
     let mut best_so_far = start; // The best node so far (the one with the lowest heuristic (estimate - cost) score)
+    let heuristic_start = Instant::now();
     let mut best_so_far_score = estimate_cost(best_so_far); // The best heuristic (estimate - cost) score so far
+    heuristic_time += heuristic_start.elapsed().as_nanos();
+
+    let mut hashmap_time = 0u128;
 
     let zero_score = K::default();
+    let hashmap_start = Instant::now();
     scores.insert(start, zero_score);
-    visit_next.push(MinScored(estimate_cost(start), start));
+    hashmap_time += hashmap_start.elapsed().as_nanos();
+    let heuristic_start = Instant::now();
+    let est = estimate_cost(start);
+    heuristic_time += heuristic_start.elapsed().as_nanos();
+    let push_start = Instant::now();
+    visit_next.push(MinScored(est, start));
+    push_time += push_start.elapsed().as_nanos();
 
-    while let Some(MinScored(estimate_score, node)) = visit_next.pop() {
+    while let Some(MinScored(estimate_score, node)) = {
+        let pop_start = Instant::now();
+        let result = visit_next.pop();
+        pop_time += pop_start.elapsed().as_nanos();
+        amount_of_pops += 1;
+        result
+    } {
         if is_goal(node) {
             let path = path_tracker.reconstruct_path_to(node);
             let cost = scores[&node];
+            let total_time = total_start.elapsed().as_nanos();
+            #[cfg(feature = "std")]
+            {
+                println!("\n--- astar_with_timeout profiling ---");
+                println!("Total time: {} ns", total_time);
+                println!("Time popping heap: {} ns", pop_time);
+                println!("Time pushing heap: {} ns", push_time);
+                println!("Time calculating costs: {} ns", cost_time);
+                println!("Time calculating heuristics: {} ns", heuristic_time);
+                println!("Time in hashmap ops: {} ns", hashmap_time);
+                println!("Amount of pops: {}", amount_of_pops);
+                println!("Amount of pushes: {}", amount_of_pushes);
+                println!("------------------------------------\n");
+            }
             return Some((cost, path));
         }
 
         // This lookup can be unwrapped without fear of panic since the node was necessarily scored
         // before adding it to `visit_next`.
-        let node_score = scores[&node];
+    let hashmap_start = Instant::now();
+    let node_score = scores[&node];
+    hashmap_time += hashmap_start.elapsed().as_nanos();
 
-        if best_so_far_score > estimate_score - node_score {
+        let heuristic_start = Instant::now();
+        let diff = estimate_score - node_score;
+        heuristic_time += heuristic_start.elapsed().as_nanos();
+        if best_so_far_score > diff {
             best_so_far = node;
-            best_so_far_score = estimate_score - node_score;
+            best_so_far_score = diff;
         }
 
         if time_out_reached() {
-            // If we have reached a timeout, we return the best node so far
             let path = path_tracker.reconstruct_path_to(best_so_far);
             let cost = scores[&best_so_far];
+            let total_time = total_start.elapsed().as_nanos();
+            #[cfg(feature = "std")]
+            {
+                println!("\n--- astar_with_timeout profiling ---");
+                println!("Total time: {} ns", total_time);
+                println!("Time popping heap: {} ns", pop_time);
+                println!("Time pushing heap: {} ns", push_time);
+                println!("Time calculating costs: {} ns", cost_time);
+                println!("Time calculating heuristics: {} ns", heuristic_time);
+                println!("Time in hashmap ops: {} ns", hashmap_time);
+                println!("Amount of pops: {}", amount_of_pops);
+                println!("Amount of pushes: {}", amount_of_pushes);
+                println!("------------------------------------\n");
+            }
             return Some((cost, path));
         }
 
         match estimate_scores.entry(node) {
             Occupied(mut entry) => {
-                // If the node has already been visited with an equal or lower score than now, then
-                // we do not need to re-visit it.
+                let hashmap_start = Instant::now();
                 if *entry.get() <= estimate_score {
+                    hashmap_time += hashmap_start.elapsed().as_nanos();
                     continue;
                 }
                 entry.insert(estimate_score);
+                hashmap_time += hashmap_start.elapsed().as_nanos();
             }
             Vacant(entry) => {
+                let hashmap_start = Instant::now();
                 entry.insert(estimate_score);
+                hashmap_time += hashmap_start.elapsed().as_nanos();
             }
         }
 
         for edge in graph.edges(node) {
             let next = edge.target();
+            let cost_start = Instant::now();
             let next_score = node_score + edge_cost(edge);
+            cost_time += cost_start.elapsed().as_nanos();
+            amount_of_pushes += 1;
 
             match scores.entry(next) {
                 Occupied(mut entry) => {
-                    // No need to add neighbors that we have already reached through a shorter path
-                    // than now.
+                    let hashmap_start = Instant::now();
                     if *entry.get() <= next_score {
+                        hashmap_time += hashmap_start.elapsed().as_nanos();
                         continue;
                     }
                     entry.insert(next_score);
+                    hashmap_time += hashmap_start.elapsed().as_nanos();
                 }
                 Vacant(entry) => {
+                    let hashmap_start = Instant::now();
                     entry.insert(next_score);
+                    hashmap_time += hashmap_start.elapsed().as_nanos();
                 }
             }
 
+            let hashmap_start = Instant::now();
             path_tracker.set_predecessor(next, node);
+            hashmap_time += hashmap_start.elapsed().as_nanos();
+            let heuristic_start = Instant::now();
             let next_estimate_score = next_score + estimate_cost(next);
+            heuristic_time += heuristic_start.elapsed().as_nanos();
+            let push_start = Instant::now();
             visit_next.push(MinScored(next_estimate_score, next));
+            push_time += push_start.elapsed().as_nanos();
         }
     }
 
+    let total_time = total_start.elapsed().as_nanos();
+    #[cfg(feature = "std")]
+    {
+    println!("\n--- astar_with_timeout profiling ---");
+    println!("Total time: {} ns", total_time);
+    println!("Time popping heap: {} ns ({:.2}%)", pop_time, pop_time as f64 * 100.0 / total_time as f64);
+    println!("Time pushing heap: {} ns ({:.2}%)", push_time, push_time as f64 * 100.0 / total_time as f64);
+    println!("Time calculating costs: {} ns ({:.2}%)", cost_time, cost_time as f64 * 100.0 / total_time as f64);
+    println!("Time calculating heuristics: {} ns ({:.2}%)", heuristic_time, heuristic_time as f64 * 100.0 / total_time as f64);
+    println!("Time in hashmap ops: {} ns ({:.2}%)", hashmap_time, hashmap_time as f64 * 100.0 / total_time as f64);
+    println!("------------------------------------\n");
+    }
     None
 }
 
